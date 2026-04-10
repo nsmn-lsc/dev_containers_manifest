@@ -1,141 +1,217 @@
-🧱 PostgreSQL rootless en Distrobox (Fedora/Bazzite) — Guía Definitiva
+# Runbook — PostgreSQL rootless en Distrobox (Fedora/Bazzite)
 
-Esta guía documenta cómo inicializar, configurar y ejecutar PostgreSQL en un contenedor Distrobox rootless, especialmente en sistemas como Bazzite, Fedora Silverblue/Kinoite, o cualquier entorno OSTree donde los contenedores rootful fallan.
-🧩 1. Contexto del entorno
+**Objetivo:** Inicializar, configurar y levantar PostgreSQL dentro de un contenedor Distrobox rootless.  
+**Aplica a:** Bazzite, Fedora Silverblue/Kinoite y entornos OSTree donde el modo rootful falla.  
+**Prerequisito:** Estar dentro del contenedor Distrobox antes de ejecutar cualquier paso.
 
-    El contenedor se ejecuta rootless (obligatorio en Bazzite).
-    PostgreSQL se instala dentro del contenedor.
-    El usuario del sistema (ej. najera) se convierte en el superusuario inicial del cluster.
-    No existe el usuario postgres del sistema.
-    No existe /var/run/postgresql (tmpfs del host → no accesible rootless).
-    El socket debe moverse a un directorio controlado por el usuario.
+---
 
+## Contexto del entorno
 
+| Condición | Valor |
+|---|---|
+| Modo de contenedor | Rootless (obligatorio en Bazzite) |
+| Superusuario inicial del cluster | Tu usuario del sistema (ej. `najera`) |
+| Usuario `postgres` del sistema | No existe |
+| `/var/run/postgresql` | No accesible (tmpfs del host) |
+| Socket | Debe estar en un directorio propio del usuario |
 
-🧩 2. Instalar PostgreSQL dentro del contenedor
-bash
+---
 
+## Paso 1 — Instalar PostgreSQL
+
+- [ ] Instalar paquetes:
+
+```bash
 sudo dnf install postgresql-server postgresql-contrib -y
+```
 
-Verificar:
-bash
+- [ ] Verificar que el binario está disponible:
 
+```bash
 which postgres
+# Esperado: /usr/bin/postgres
+```
 
-🧩 3. Preparar el directorio de datos
+---
 
-Crear y asignar permisos correctos:
-bash
+## Paso 2 — Preparar el directorio de datos
 
+- [ ] Crear el directorio y asignar permisos:
+
+```bash
 sudo mkdir -p /var/lib/pgsql/data
-sudo chown -R $USER:$USER /var/lib/pgsql
+sudo chown -R "$USER":"$USER" /var/lib/pgsql
 chmod 700 /var/lib/pgsql
 chmod 700 /var/lib/pgsql/data
+```
 
-🧩 4. Inicializar el cluster
-bash
+- [ ] Verificar permisos:
 
+```bash
+ls -ld /var/lib/pgsql/data
+# Esperado: drwx------ ... najera najera ...
+```
+
+---
+
+## Paso 3 — Inicializar el cluster
+
+- [ ] Ejecutar `initdb`:
+
+```bash
 initdb -D /var/lib/pgsql/data
+```
 
-Esto crea:
+- [ ] Confirmar que se generaron los archivos del cluster:
 
-    postgresql.conf
-    pg_hba.conf
-    base/
-    global/
-    pg_wal/
+```bash
+ls /var/lib/pgsql/data
+# Esperado: postgresql.conf  pg_hba.conf  base/  global/  pg_wal/  ...
+```
 
+---
 
-🧩 5. Configurar el socket para entornos rootless
+## Paso 4 — Configurar el socket (rootless)
 
-Crear directorio alternativo:
-bash
+- [ ] Crear directorio para el socket:
 
+```bash
 mkdir -p /var/lib/pgsql/data/run
 chmod 700 /var/lib/pgsql/data/run
+```
 
-Editar postgresql.conf:
-bash
+- [ ] Editar `postgresql.conf` para apuntar el socket al nuevo directorio:
 
+```conf
 unix_socket_directories = '/var/lib/pgsql/data/run'
+```
 
+---
 
-🧩 6. Arrancar PostgreSQL sin systemd
-bash
+## Paso 5 — Arrancar PostgreSQL sin systemd
 
+- [ ] Iniciar el servidor:
+
+```bash
 pg_ctl -D /var/lib/pgsql/data -l logfile start
+```
 
-Verificar:
-bash
+- [ ] Verificar que está corriendo:
 
+```bash
 pg_ctl -D /var/lib/pgsql/data status
+# Esperado: pg_ctl: server is running (PID: ...)
+```
 
-🧩 7. Conectarse al servidor
+---
 
-El superusuario inicial es el usuario del sistema (ej. najera).
+## Paso 6 — Primera conexión
 
-Conexión por TCP:
-bash
+El superusuario inicial es tu usuario del sistema.
 
+- [ ] Conectar por TCP:
+
+```bash
 psql -h localhost -U najera postgres
+```
 
-Conexión por socket:
-bash
+- [ ] O conectar por socket:
 
+```bash
 psql -h /var/lib/pgsql/data/run -U najera postgres
+```
 
+---
 
-🧩 8. Crear el rol “postgres” (opcional pero recomendado)
+## Paso 7 — Crear el rol `postgres` (recomendado)
 
-Dentro de psql:
-sql
+- [ ] Dentro de `psql`, ejecutar:
 
+```sql
 CREATE ROLE postgres WITH LOGIN SUPERUSER PASSWORD 'tu_password';
+```
 
-🧩 9. Crear bases necesarias
-sql
+---
 
+## Paso 8 — Crear bases de datos necesarias
+
+- [ ] Ejecutar en `psql`:
+
+```sql
 CREATE DATABASE postgres OWNER postgres;
 CREATE DATABASE najera OWNER najera;
+```
 
-🧩 10. Habilitar conexiones externas (otros contenedores)
+---
 
-Editar postgresql.conf:
-bash
+## Paso 9 — Habilitar conexiones externas
 
+- [ ] En `postgresql.conf`, configurar:
+
+```conf
 listen_addresses = '*'
+```
 
-Editar pg_hba.conf:
-bash
+- [ ] En `pg_hba.conf`, agregar:
 
+```conf
 host all all all md5
+```
 
-Reiniciar:
-bash
+- [ ] Reiniciar el servidor para aplicar cambios:
 
+```bash
 pg_ctl -D /var/lib/pgsql/data restart
+```
 
-🧩 11. Conexión desde otros contenedores Distrobox
+- [ ] Verificar estado tras el reinicio:
 
-Usar:
-Código
+```bash
+pg_ctl -D /var/lib/pgsql/data status
+```
 
+---
+
+## Paso 10 — Conectar desde otros contenedores Distrobox
+
+Parámetros de conexión a usar en el cliente o aplicación:
+
+```ini
 host=host.containers.internal
 port=5432
 user=postgres
 password=tu_password
 dbname=lo_que_necesites
+```
 
+---
 
-🧩 12. Estructura recomendada de scripts
-start-postgres.sh
-bash
+## Scripts de operación diaria
 
+**`start-postgres.sh`**
+
+```bash
 #!/usr/bin/env bash
 pg_ctl -D /var/lib/pgsql/data -l logfile start
+```
 
-stop-postgres.sh
-bash
+**`stop-postgres.sh`**
 
+```bash
 #!/usr/bin/env bash
 pg_ctl -D /var/lib/pgsql/data stop
+```
+
+---
+
+## Referencia rápida de comandos
+
+| Acción | Comando |
+|---|---|
+| Iniciar | `pg_ctl -D /var/lib/pgsql/data -l logfile start` |
+| Detener | `pg_ctl -D /var/lib/pgsql/data stop` |
+| Reiniciar | `pg_ctl -D /var/lib/pgsql/data restart` |
+| Estado | `pg_ctl -D /var/lib/pgsql/data status` |
+| Conectar (TCP) | `psql -h localhost -U najera postgres` |
+| Conectar (socket) | `psql -h /var/lib/pgsql/data/run -U najera postgres` |
